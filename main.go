@@ -21,7 +21,7 @@ type ApiConfig struct {
 type CliCommand struct {
 	name        string
 	description string
-	callback    func(*ApiConfig) error
+	callback    func(*ApiConfig, ...string) error
 }
 
 type LocationAreasResponse struct {
@@ -34,7 +34,7 @@ type LocationAreasResponse struct {
 	} `json:"results"`
 }
 
-/*
+/* // option 2
 type LocationAreasResponse struct {
 	Count    int                 `json:"count"`
 	Next     string              `json:"next"`
@@ -42,6 +42,14 @@ type LocationAreasResponse struct {
 	Results  []map[string]string		 `json:"results"`
 }
 */
+
+type ExploreResponse struct {
+	PokemonEncounters []struct {
+		Pokemon struct {
+			Name string `json:"name"`
+		} `json:"pokemon"`
+	} `json:"pokemon_encounters"`
+}
 
 func main() {
 	// Cache to store values to optimise API calls
@@ -73,6 +81,11 @@ func main() {
 			description: "Display Pokedex map of the previous 20 Location Areas (API call)",
 			callback:    commandMapBack,
 		},
+		"explore": {
+			name:        "explore",
+			description: "Explore all the Pokemon you can encounter",
+			callback:    commandExplore,
+		},
 	}
 
 	// Wait input via command-line, clean the input, get 1st word as the COMMAND and execute .callback(...)
@@ -84,11 +97,11 @@ func main() {
 			input += scanner.Text()
 		}
 
-		textSlice := cleanInput(input)
-		if len(textSlice) <= 0 {
+		inputSliced := cleanInput(input)
+		if len(inputSliced) <= 0 {
 			continue
 		}
-		firstWord := textSlice[0]
+		firstWord := inputSliced[0]
 
 		// verify commands is allowed
 		command, ok := commands[firstWord]
@@ -98,7 +111,7 @@ func main() {
 			continue
 		}
 		// invoke the command's workflow
-		if err := command.callback(&apiConf); err != nil {
+		if err := command.callback(&apiConf, inputSliced[1:]...); err != nil {
 			fmt.Printf("Could not run: %s\n", firstWord)
 			input = "" // do not delete
 			continue
@@ -110,117 +123,147 @@ func main() {
 
 }
 
-func callAPI(fullURL string, apiConf *ApiConfig) (LocationAreasResponse, error) {
-	// Create a HTTP GET Request. Shorthand //	res, err := http.Get(apiConf.Next)
-	req, err := http.NewRequest("GET", fullURL, nil)
+func fetchJSON(url string) ([]byte, error) {
+	// Create HTTP GET Request. Shorthand //	res, err := http.Get(apiConf.Next)
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return LocationAreasResponse{}, fmt.Errorf("could not create request: %w", err)
+		return []byte{}, fmt.Errorf("could not create request: %w", err)
 	}
 	// Set Headers
 	req.Header.Set("Content-Type", "application/json")
+
 	// Create a Client object, make the HTTP Request and receive the HTTP Response
 	client := &http.Client{}
 	res, err := client.Do(req)
 	if err != nil {
-		return LocationAreasResponse{}, fmt.Errorf("network Error: %v", err)
+		return []byte{}, fmt.Errorf("network Error: %v", err)
 	}
 	defer res.Body.Close()
 
 	// Verify successful HTTP GET Request
 	if res.StatusCode != http.StatusOK {
-		return LocationAreasResponse{}, fmt.Errorf("could not retrieve those location areas. non-OK HTTP status: %s", res.Status)
+		return []byte{}, fmt.Errorf("could not retrieve those location areas. non-OK HTTP status: %s", res.Status)
 	}
 	if res.StatusCode > 299 {
-		return LocationAreasResponse{}, fmt.Errorf("Response failed with status code: %d and\nbody: %v\n", res.StatusCode, res.Body)
+		return []byte{}, fmt.Errorf("Response failed with status code: %d and\nbody: %v\n", res.StatusCode, res.Body)
 	}
-
-	// Decode JSON byte-stream into a Go struct
-	var resources LocationAreasResponse
-	// Option 1: json.Unmarshal works with data that's already in []byte format
 
 	data, err := io.ReadAll(res.Body)
 	if err != nil {
-		return LocationAreasResponse{}, fmt.Errorf("could not read response body: %w", err)
+		return []byte{}, fmt.Errorf("could not read response body: %w", err)
 	}
-	if err := json.Unmarshal(data, &resources); err != nil {
-		return LocationAreasResponse{}, fmt.Errorf("could not unmarshal the response body: %w", err)
+	return data, nil
+}
+
+func callAPI[T any](url string, apiConf *ApiConfig) (T, error) {
+	var result T
+
+	// A. If cache has this URL, get cached []byte (cacheEntry exists or not timed-out)
+	if cachedData, ok := apiConf.Cache.Get(url); ok {
+		err := json.Unmarshal(cachedData, &result)
+		return result, err
 	}
-	// Option 2: json.Decoder streams data from io.Reader into a Go struct
-	/*
-		decoder := json.NewDecoder(res.Body)
-		err = decoder.Decode(&resources)
-		if err != nil {
-			return LocationAreasResponse{}, fmt.Errorf("error decoding response: %v", err)
-		}
-	*/
 
-	// Location Areas API creates HTTP URLs for
-	// 1) next x-amount (20 in our case) Location Areas
-	// 2) previous x-amount (20 in our case) Location Areas, there are any (i.e not first
-	// Update the next HTTP Request URL, and previous HTTP Request URL
-	(*apiConf).Next = resources.Next
-	(*apiConf).Previous = resources.Previous
+	// B. If no cache for this URL, call API.
+	data, err := fetchJSON(url)
+	if err != nil {
+		return result, err
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return result, fmt.Errorf("could not unmarshal: %w", err)
+	}
 
-	// Save to Cache after successful HTTP fetch
-	(*apiConf).Cache.Add(fullURL, data)
-	return resources, nil
+	// Caching successful HTTP Response ([]byte) for 5 seconds each entry
+	(*apiConf).Cache.Add(url, data)
+
+	return result, nil
 }
 
 // Tightly couple the print function with custom type, to avoid passing wrong parameter / incorrect re-use
+/*
 type printResponse interface {
-	printResponse()
+	print(string)
 }
+*/
 
-func (response LocationAreasResponse) printResponse() {
-	for _, resultItem := range response.Results {
-		fmt.Printf("%s\n", resultItem.Name)
+func (response LocationAreasResponse) print(prefix string) {
+	for _, item := range response.Results {
+		fmt.Printf("%s\n", item.Name)
 	}
 }
 
-// todo: If you're on the first "page" of results, this command should just print "you're on the first page". Example usage:
+func (response ExploreResponse) print(prefix string) {
+	fmt.Println(prefix)
+	for _, item := range response.PokemonEncounters {
+		fmt.Printf(" - %s\n", item.Pokemon.Name)
+	}
+}
 
-func commandMap(apiConf *ApiConfig) error {
-	fmt.Println("Printing next 20 Location Areas!")
-	fmt.Printf("HTTP GET Called on: %s\n", (*apiConf).Next)
+func commandExplore(apiConf *ApiConfig, args ...string) error {
+	if len(args) <= 0 {
+		return fmt.Errorf("not enough arguments to complete command. example: explore pastoria-city-area")
+	}
+	url := "https://pokeapi.co/api/v2/location-area" + "/" + args[0]
 
+	exploreResponse, err := callAPI[ExploreResponse](url, apiConf)
+	if err != nil {
+		return err
+	}
+	prefix := fmt.Sprintf("Exploring %s...\nFound Pokemon:", args[0])
+	exploreResponse.print(prefix)
+	return nil
+}
+
+func commandMap(apiConf *ApiConfig, args ...string) error {
 	if (*apiConf).Next == "null" {
 		return fmt.Errorf("you're on the last page")
 	}
 	fullURL := (*apiConf).Next
 
-	pokedexMap, err := callAPI(fullURL, apiConf)
+	pokedexMap, err := callAPI[LocationAreasResponse](fullURL, apiConf)
 	if err != nil {
 		return err
 	}
-	pokedexMap.printResponse()
+	(*apiConf).Next = pokedexMap.Next
+	(*apiConf).Previous = pokedexMap.Previous
+
+	fmt.Println("Printing next 20 Location Areas!")
+	fmt.Printf("HTTP GET Called on: %s\n", (*apiConf).Next)
+
+	prefix := ""
+	pokedexMap.print(prefix)
 	return nil
 }
 
-func commandMapBack(apiConf *ApiConfig) error {
-	fmt.Println("Printing previous 20 Location Areas!")
-	fmt.Printf("HTTP GET Called on: %s\n", (*apiConf).Previous)
-
+func commandMapBack(apiConf *ApiConfig, args ...string) error {
 	if (*apiConf).Previous == "null" {
 		return fmt.Errorf("you're on the first page")
 	}
 	fullURL := (*apiConf).Previous
 
-	pokedexMap, err := callAPI(fullURL, apiConf)
+	pokedexMap, err := callAPI[LocationAreasResponse](fullURL, apiConf)
 	if err != nil {
 		return err
 	}
-	pokedexMap.printResponse()
+	(*apiConf).Next = pokedexMap.Next
+	(*apiConf).Previous = pokedexMap.Previous
+
+	fmt.Println("Printing previous 20 Location Areas!")
+	fmt.Printf("HTTP GET Called on: %s\n", (*apiConf).Previous)
+
+	prefix := ""
+	pokedexMap.print(prefix)
 	return nil
 }
 
-func commandExit(conf *ApiConfig) error {
+func commandExit(conf *ApiConfig, args ...string) error {
 	fmt.Println("Closing the Pokedex... Goodbye!")
 	os.Exit(0)
 	return nil
 
 }
 
-func commandHelp(conf *ApiConfig) error {
+func commandHelp(conf *ApiConfig, args ...string) error {
 	fmt.Println("Welcome to the Pokedex!\nUsage:\n\nhelp: Displays a help message\nexit: Exit the Pokedex")
 	return nil
 }
