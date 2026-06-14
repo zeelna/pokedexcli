@@ -57,7 +57,21 @@ type Pokemon struct {
 	PokemonName    string `json:"name"`
 	Id             int    `json:"id"`
 	BaseExperience int    `json:"base_experience"`
-	CatchStatus    bool   // populate regardless of API response
+	Height         int    `json:"height"`
+	Weight         int    `json:"weight"`
+	Stats          []struct {
+		BaseStat int `json:"base_stat"`
+		Effort   int `json:"effort"`
+		Stat     struct {
+			Name string `json:"name"`
+		} `json:"stat"`
+	} `json:"stats"`
+	Types []struct {
+		Type struct {
+			Name string `json:"name"`
+		} `json:"type"`
+	} `json:"types"`
+	CatchStatus bool // populate regardless of API response
 }
 
 func main() {
@@ -100,6 +114,11 @@ func main() {
 			name:        "catch",
 			description: "Catch a Pokemon if you can",
 			callback:    commandCatch,
+		},
+		"inspect": {
+			name:        "inspect",
+			description: "Inspect a Pokemon you have caught",
+			callback:    commandInspect,
 		},
 	}
 
@@ -195,12 +214,6 @@ func callAPI[T any](url string, apiConf *ApiConfig) (T, error) {
 	return result, nil
 }
 
-// Tightly couple the print function with custom type, to avoid passing wrong parameter / incorrect re-use
-/*
-type printResponse interface {
-	print(string)
-}
-*/
 func (response Pokemon) print(prefix string) {
 	fmt.Println(prefix)
 	if response.CatchStatus {
@@ -209,6 +222,23 @@ func (response Pokemon) print(prefix string) {
 	} else {
 		msg := fmt.Sprintf("%s escaped!", response.PokemonName)
 		fmt.Println(msg)
+	}
+}
+
+func (response Pokemon) printInspect(prefix string) {
+	fmt.Printf(prefix)
+	fmt.Printf("Name: %s\n", response.PokemonName)
+	fmt.Printf("Height: %d\n", response.Height)
+	fmt.Printf("Weight: %d\n", response.Weight)
+
+	fmt.Println("Stats:")
+	for _, item := range response.Stats {
+		fmt.Printf("  - %s:  %d\n", item.Stat.Name, item.BaseStat)
+	}
+
+	fmt.Println("Types:")
+	for _, item := range response.Types {
+		fmt.Println("  - " + item.Type.Name)
 	}
 }
 
@@ -223,6 +253,22 @@ func (response ExploreResponse) print(prefix string) {
 	for _, item := range response.PokemonEncounters {
 		fmt.Printf(" - %s\n", item.Pokemon.Name)
 	}
+}
+
+func commandInspect(apiConf *ApiConfig, args ...string) error {
+	if len(args) <= 0 {
+		return fmt.Errorf("not enough arguments to complete command. example usage: inspect pikachu")
+	}
+
+	pokemonName := args[0]
+	pokemon, ok := (*apiConf).Pokedex[pokemonName]
+	if !ok {
+		return fmt.Errorf("you have not caught that pokemon")
+	}
+	prefix := ""
+	pokemon.printInspect(prefix)
+
+	return nil
 }
 
 func commandCatch(apiConf *ApiConfig, args ...string) error {
