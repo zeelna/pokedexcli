@@ -15,6 +15,7 @@ type cacheEntry struct {
 	val       []byte
 }
 
+// Create a new Cache, to store HTTP Request URL as key, and HTTP Response Body as value. A cache entry is deleted if older than 'interval' seconds
 func NewCache(interval time.Duration) *Cache {
 	cache := Cache{
 		content: make(map[string]cacheEntry),
@@ -23,6 +24,7 @@ func NewCache(interval time.Duration) *Cache {
 	return &cache
 }
 
+// Add Cache entry, key is the URL, value is the HTTP Response Body
 func (cache *Cache) Add(key string, value []byte) {
 	cache.mu.Lock()
 	defer cache.mu.Unlock()
@@ -33,6 +35,7 @@ func (cache *Cache) Add(key string, value []byte) {
 	}
 }
 
+// Get a Cache entry by a URL as key passed by argument
 func (cache *Cache) Get(key string) ([]byte, bool) {
 	cache.mu.RLock()
 	defer cache.mu.RUnlock()
@@ -44,6 +47,7 @@ func (cache *Cache) Get(key string) ([]byte, bool) {
 	return entry.val, true
 }
 
+// Delete ('reap') an entry in the cache once it's createAt time has become larger than 'interval' (5seconds by config currently)
 func (cache *Cache) reapLoop(interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	for range ticker.C {
