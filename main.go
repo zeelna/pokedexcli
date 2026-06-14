@@ -7,11 +7,15 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"time"
+
+	"github.com/zeelna/pokedexcli/internal/pokecache"
 )
 
 type ApiConfig struct {
 	Next     string
 	Previous string
+	Cache    *pokecache.Cache
 }
 
 type CliCommand struct {
@@ -40,15 +44,14 @@ type LocationAreasResponse struct {
 */
 
 func main() {
-	/*
-		fmt.Println("-----------------")
-		fmt.Printf("%v\n", cleanInput("Hello, World!"))
-		fmt.Printf("%v\n", cleanInput("pikacHu AsH "))
-		fmt.Printf("%v\n", cleanInput("   "))
-		fmt.Printf("%v\n", cleanInput(""))
-		fmt.Println("-----------------")
-	*/
+	// Cache to store values to optimise API calls
+	apiConf := ApiConfig{
+		Next:     "https://pokeapi.co/api/v2/location-area", //?offset=0&limit=20",
+		Previous: "",
+		Cache:    pokecache.NewCache(5 * time.Second),
+	}
 
+	// allowed Command-line commands user can use to receive reply
 	commands := map[string]CliCommand{
 		"exit": {
 			name:        "exit",
@@ -70,11 +73,6 @@ func main() {
 			description: "Display Pokedex map of the previous 20 Location Areas (API call)",
 			callback:    commandMapBack,
 		},
-	}
-
-	apiConf := ApiConfig{
-		Next:     "https://pokeapi.co/api/v2/location-area", //?offset=0&limit=20",
-		Previous: "",
 	}
 
 	// Wait input via command-line, clean the input, get 1st word as the COMMAND and execute .callback(...)
@@ -147,7 +145,6 @@ func callAPI(fullURL string, apiConf *ApiConfig) (LocationAreasResponse, error) 
 	if err := json.Unmarshal(data, &resources); err != nil {
 		return LocationAreasResponse{}, fmt.Errorf("could not unmarshal the response body: %w", err)
 	}
-
 	// Option 2: json.Decoder streams data from io.Reader into a Go struct
 	/*
 		decoder := json.NewDecoder(res.Body)
@@ -164,7 +161,8 @@ func callAPI(fullURL string, apiConf *ApiConfig) (LocationAreasResponse, error) 
 	(*apiConf).Next = resources.Next
 	(*apiConf).Previous = resources.Previous
 
-	// Display the Location Area strings to Command Line Interface (CLI
+	// Save to Cache after successful HTTP fetch
+	(*apiConf).Cache.Add(fullURL, data)
 	return resources, nil
 }
 
