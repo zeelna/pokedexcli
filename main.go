@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"time"
@@ -16,6 +17,7 @@ type ApiConfig struct {
 	Next     string
 	Previous string
 	Cache    *pokecache.Cache
+	Pokedex  map[string]Pokemon
 }
 
 type CliCommand struct {
@@ -51,12 +53,20 @@ type ExploreResponse struct {
 	} `json:"pokemon_encounters"`
 }
 
+type Pokemon struct {
+	PokemonName    string `json:"name"`
+	Id             int    `json:"id"`
+	BaseExperience int    `json:"base_experience"`
+	CatchStatus    bool   // populate regardless of API response
+}
+
 func main() {
 	// Cache to store values to optimise API calls
 	apiConf := ApiConfig{
 		Next:     "https://pokeapi.co/api/v2/location-area", //?offset=0&limit=20",
 		Previous: "",
 		Cache:    pokecache.NewCache(5 * time.Second),
+		Pokedex:  make(map[string]Pokemon),
 	}
 
 	// allowed Command-line commands user can use to receive reply
@@ -86,6 +96,11 @@ func main() {
 			description: "Explore all the Pokemon you can encounter",
 			callback:    commandExplore,
 		},
+		"catch": {
+			name:        "catch",
+			description: "Catch a Pokemon if you can",
+			callback:    commandCatch,
+		},
 	}
 
 	// Wait input via command-line, clean the input, get 1st word as the COMMAND and execute .callback(...)
@@ -112,7 +127,8 @@ func main() {
 		}
 		// invoke the command's workflow
 		if err := command.callback(&apiConf, inputSliced[1:]...); err != nil {
-			fmt.Printf("Could not run: %s\n", firstWord)
+			//fmt.Printf("Could not run: %s\nError: %s\n", firstWord, err)
+			fmt.Println(err)
 			input = "" // do not delete
 			continue
 		}
@@ -185,6 +201,16 @@ type printResponse interface {
 	print(string)
 }
 */
+func (response Pokemon) print(prefix string) {
+	fmt.Println(prefix)
+	if response.CatchStatus {
+		msg := fmt.Sprintf("%s was caught!", response.PokemonName)
+		fmt.Println(msg)
+	} else {
+		msg := fmt.Sprintf("%s escaped!", response.PokemonName)
+		fmt.Println(msg)
+	}
+}
 
 func (response LocationAreasResponse) print(prefix string) {
 	for _, item := range response.Results {
@@ -199,9 +225,41 @@ func (response ExploreResponse) print(prefix string) {
 	}
 }
 
+func commandCatch(apiConf *ApiConfig, args ...string) error {
+	if len(args) <= 0 {
+		return fmt.Errorf("not enough arguments to complete command. example usage: catch pikachu")
+	}
+	pokemonName := args[0]
+	url := "https://pokeapi.co/api/v2/pokemon" + "/" + pokemonName
+
+	if _, ok := (*apiConf).Pokedex[pokemonName]; ok {
+		return fmt.Errorf("you already have this Pokemon")
+	}
+
+	pokemon, err := callAPI[Pokemon](url, apiConf)
+	if err != nil {
+		return err
+	}
+
+	// Calculate if Pokemon catched based on base_experience
+	catchChance := rand.IntN(200)
+	if pokemon.BaseExperience < catchChance {
+		// Successful Catch, add Pokemon to Pokedex
+		pokemon.CatchStatus = true
+		(*apiConf).Pokedex[pokemon.PokemonName] = pokemon
+	} else {
+		// Failed Catch
+		pokemon.CatchStatus = false
+	}
+
+	prefix := fmt.Sprintf("Throwing a Pokeball at %s...", args[0])
+	pokemon.print(prefix)
+	return nil
+}
+
 func commandExplore(apiConf *ApiConfig, args ...string) error {
 	if len(args) <= 0 {
-		return fmt.Errorf("not enough arguments to complete command. example: explore pastoria-city-area")
+		return fmt.Errorf("not enough arguments to complete command. example usage: explore pastoria-city-area")
 	}
 	url := "https://pokeapi.co/api/v2/location-area" + "/" + args[0]
 
