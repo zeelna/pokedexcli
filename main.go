@@ -120,6 +120,11 @@ func main() {
 			description: "Inspect a Pokemon you have caught",
 			callback:    commandInspect,
 		},
+		"pokedex": {
+			name:        "pokedex",
+			description: "View your Pokemon in Pokedex",
+			callback:    commandPokedex,
+		},
 	}
 
 	// Wait input via command-line, clean the input, get 1st word as the COMMAND and execute .callback(...)
@@ -253,6 +258,17 @@ func (response ExploreResponse) print(prefix string) {
 	for _, item := range response.PokemonEncounters {
 		fmt.Printf(" - %s\n", item.Pokemon.Name)
 	}
+}
+
+func commandPokedex(apiConf *ApiConfig, args ...string) error {
+	if 0 >= len((*apiConf).Pokedex) {
+		return fmt.Errorf("your have no pokemon in your Pokedex")
+	}
+	fmt.Println("Your Pokedex:")
+	for _, pokemon := range (*apiConf).Pokedex {
+		fmt.Println(" - " + pokemon.PokemonName)
+	}
+	return nil
 }
 
 func commandInspect(apiConf *ApiConfig, args ...string) error {
